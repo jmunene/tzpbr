@@ -1,5 +1,11 @@
 # Tz PbR Monitoring App
 
+## Files;
+- `ALLWSG84.csv` and `ALL1960.csv` are used to create overlay points for the map
+- `wpt_data.csv` is the main file used in the dashboard
+- `summaryTable_export.csv` is an output of the Tables Tab
+- `monitoring_app.Rmd` is the R script for the dashboard
+
 To Clone, follow these steps;
 
 # Setup Git on RStudio and Associate with GitHub
