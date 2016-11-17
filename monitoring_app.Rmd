@@ -1,0 +1,445 @@
+---
+title: "Tanzania PbR Water Points Verification"
+runtime: shiny
+author: Jonathan
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    social: menu
+    source_code: embed
+    vertical_layout: fill
+    storyboard: true
+   
+    
+---
+
+```{r setup, include=FALSE}
+#Load the libraries that you will require
+library(flexdashboard)
+library(shiny)
+library(dplyr)
+library(plyr)
+library(leaflet)
+library(repmis)
+library(tidyr)
+library(htmltools)
+library(tableHTML)
+library(htmlTable)
+library(rpivotTable)
+library(descr)
+library(tigerstats)
+library(R2HTML)
+```
+
+```{r global, include=FALSE}
+
+# load the Field verification dataset:
+wpt_data_col <- read.csv('wpt_data.csv',header=TRUE)
+# Load the sampled points dataset;
+sample_points_wsg84 <- read.csv('ALLWSG84.csv',header=TRUE)
+sample_points_1960 <- read.csv('ALL1960.csv',header=TRUE)
+
+# Rename the OSM and Field Lat and Long to Lat and Long
+wpt_data_col_osm <- rename(wpt_data_col,c("wpt.ctr.lat" = "lat", "wpt.ctr.lon" = "long"))
+wpt_data_col_field <- rename(wpt_data_col,c("verified_wpts._wpt_gps_latitude" = "lat", "verified_wpts._wpt_gps_longitude" = "long"))
+
+sample_points_wsg84 <- rename(sample_points_wsg84,c("LATITUDE" = "lat", "LONGITUDE" = "long"))
+sample_points_1960 <- rename(sample_points_1960,c("LATITUDE" = "lat", "LONGITUDE" = "long"))
+
+#Remove rows with NA in GPS in Field data
+wpt_data_col_field <- wpt_data_col_field[!(is.na(wpt_data_col_field$verified_wpts.wpt_gps)),] 
+
+```
+
+Sidebar {.sidebar data-width=200}
+=====================================
+This drop down will show the LGAs that have been visited so far:
+
+```{r}
+# Create the LGAs dropdown list to use for filtering the data
+
+selectInput("select", "Select an LGA:", choices = levels(wpt_data_col$wpt.LGA))
+
+```
+
+Overview {data-icon="fa-home"} 
+=====================================  
+
+Row {.tabset,orientation:columns}
+-----------------------------------------------------------------------
+### Completed Primary Sample: LGA (Level)
+
+```{r}
+renderValueBox({ # Call function to display a value box
+  
+  select <- reactive({
+    input$select}) # Call the reactive select for the data in the value box
+  
+  wpt_omk_f <- wpt_data_col %>%
+    filter(wpt_data_col$wpt.LGA==select()) # Filter the data based on the value selected
+  
+  sum_table <- sum(na.omit(wpt_omk_f$wpt.sample_colors) == "Primary_Sample") # Create a table
+  
+  valueBox(sum_table, 
+           icon = "fa-tint",
+           color = ifelse(sum_table >= 0, "orange", "primary")) # Create a value box from the table and assign params
+})
+```
+
+### Completed Primary Replacement Sample: LGA (Level)
+
+```{r}
+renderValueBox({
+  
+  select <- reactive({
+    input$select})
+  
+  wpt_omk_f <- wpt_data_col %>%
+    filter(wpt_data_col$wpt.LGA==select())
+  
+  sum_table <- sum(na.omit(wpt_omk_f$wpt.sample_colors) == "Replacement_Sample")
+  
+  valueBox(sum_table, 
+           icon = "fa-tint",
+           color = ifelse(sum_table >= 0, "blue", "primary"))
+})
+```
+
+### Completed Not in Sample Replacement: LGA (Level)
+
+```{r}
+renderValueBox({
+  
+  select <- reactive({
+    input$select})
+  
+  wpt_omk_f <- wpt_data_col %>%
+    filter(wpt_data_col$wpt.LGA==select())
+  
+  sum_table <- sum(na.omit(wpt_omk_f$wpt.sample_colors) == "Not_sample")
+  
+  valueBox(sum_table, 
+           icon = "fa-tint",
+           color = ifelse(sum_table >= 0, "grey", "primary"))
+})
+```
+
+Column
+-------------------------------------------------------------
+
+### Table: A Table Output showing breakdown per village:
+
+```{r}
+
+
+renderTable ({ # Call function to display the output
+  
+  select <- reactive({
+    input$select})
+  
+  wpt_omk_f <- wpt_data_col %>%
+    filter(wpt_data_col$wpt.LGA==select())
+  
+
+summaryTable <- ddply(wpt_omk_f, "wpt.newvillage", summarise, 
+          All_Completed = length(na.omit(wpt.sample_colors)),
+          Primary_Sample=sum(na.omit(wpt.sample_colors == "Primary_Sample")),
+          Replacement_Sample=sum(na.omit(wpt.sample_colors == "Replacement_Sample")),
+          Not_Sample=sum(na.omit(wpt.sample_colors == "Not_sample")))
+
+summaryTable
+
+})
+
+```
+
+Map {data-icon="fa-globe"} 
+===================================== 
+
+### Field Map: Map showing visited Points based on Field Data, with an overlay of Sampled Points. **Green Points** with a **Blue Ring** around them are **Verified Points** from Field Data. __Orange__ = _Primary Sample_, __Blue__ = _Replacement Sample_, __Gray__ = _Other Points_: (Toggle to see the Sample Points, using the WSG84 Projection or the 1960 Projection.)
+
+
+```{r}
+
+# Create color scale
+
+status_color <- colorFactor(c('grey','orange','blue'),domain = c('Not_sample','Primary_Sample','Replacement_Sample'))
+
+# Create point size
+
+size <- 5
+    
+    # Creating the Basemap
+    
+ tz_map <- 'https://api.mapbox.com/styles/v1/ona/ciuife06u00392inoja17ej74/tiles/256/{z}/{x}/{y}?access_token=pk.eyJ1Ijoib25hIiwiYSI6IlVYbkdyclkifQ.0Bz-QOOXZZK01dq4MuMImQ'
+ 
+    
+renderLeaflet({ # Call function to show the map
+      
+      select <- reactive({
+    input$select})
+  
+  wpt_omk_f <- wpt_data_col_field %>%
+    filter(wpt_data_col_field$wpt.LGA==select()) # Field data filter
+  
+  sample_data_f_wsg84 <- sample_points_wsg84 %>%
+    filter(sample_points_wsg84$LGA==select()) # Sampled points WSG84 projection
+  
+    sample_data_f_1960 <- sample_points_1960 %>%
+    filter(sample_points_1960$LGA==select())# Sampled points 1960 projection
+  
+      wpt_map <- leaflet(wpt_omk_f)%>% # Create the map using field data
+        fitBounds(~min(long), ~min(lat), ~max(long), ~max(lat)) %>% # Set bounds
+        
+        addTiles(tz_map) %>% # Add the MapBox Basemap
+        
+        # Add the circle markers for the Field data
+       addCircleMarkers(data=wpt_omk_f,lng = ~long, lat = ~lat, radius = size, fillColor = "green", 
+                   popup = paste0(wpt_omk_f$wpt.newvillage,' || Count:',
+                                  wpt_omk_f$wpt.newvillage), fillOpacity = 2.5, stroke = F)  %>% addCircleMarkers(
+                                   clusterOptions = markerClusterOptions(),popup = ~htmlEscape(wpt_omk_f$wpt.WPTNAME))%>%
+        
+       # Add the circle markers for the sampled points WSG84 projection
+         addCircleMarkers(data=sample_data_f_wsg84,group="Sample Points WSG84", radius = ~ size,color=~status_color(sample_colors),fill=TRUE,fillOpacity = 2.0,popup = ~htmlEscape(sample_data_f_wsg84$WPTNAME)) %>%
+        
+        # Add the circle markers for the sampled points 1960 projection
+        addCircleMarkers(data=sample_data_f_1960,group="Sample Points 1960", radius = ~ size,color=~status_color(sample_colors),fill=TRUE,fillOpacity = 2.,popup = ~htmlEscape(sample_data_f_1960$WPTNAME)) %>%
+        
+        # Add the layer controls
+        addLayersControl(
+          baseGroups = c("Sample Points WSG84","Sample Points 1960"),
+          options = layersControlOptions(collapsed = FALSE))
+      
+      
+})
+```
+
+Indicators {data-icon="fa-bar-chart"} 
+=====================================  
+
+Row {.tabset,orientation:columns}
+-----------------------------------------------------------------------
+
+
+### Total Sampled Primary Points:
+
+```{r}
+renderValueBox({ # Call function to display a value box
+  
+  sum_table_primary_sampled <- sum(na.omit(sample_points_wsg84$sample_colors) == "Primary_Sample") # Create a table
+  
+  valueBox(sum_table_primary_sampled, 
+           icon = "fa-tint",
+           color = ifelse(sum_table_primary_sampled >= 0, "orange", "primary")) # Create a value box from the table and assign params
+})
+```
+
+### Total Sampled Replacement Points:
+
+```{r}
+renderValueBox({ # Call function to display a value box
+  
+  sum_table_repl_sampled <- sum(na.omit(sample_points_wsg84$sample_colors) == "Replacement_Sample") # Create a table
+  
+  valueBox(sum_table_repl_sampled, 
+           icon = "fa-tint",
+           color = ifelse(sum_table_repl_sampled >= 0, "blue", "primary")) # Create a value box from the table and assign params
+})
+```
+
+### Total Points not in Sample:
+
+```{r}
+renderValueBox({ # Call function to display a value box
+  
+  sum_table_non_sample <- sum(na.omit(sample_points_wsg84$sample_colors) == "Not_sample") # Create a table
+  
+  valueBox(sum_table_non_sample, 
+           icon = "fa-tint",
+           color = ifelse(sum_table_non_sample >= 0, "grey", "primary")) # Create a value box from the table and assign params
+})
+```
+
+Row {.tabset,orientation:columns}
+-------------------------------------
+> Overall Progress:
+
+### Overall Total number of **Completed** Water Points.
+
+```{r}
+renderValueBox({ # Call function to display a value box
+  
+  
+  
+  sum_table_total_Pry <- sum(na.omit(wpt_data_col$wpt.sample_colors) == "Primary_Sample")
+  sum_table_total_Repl <- sum(na.omit(wpt_data_col$wpt.sample_colors) == "Replacement_Sample")
+  sum_table_total_Not <- sum(na.omit(wpt_data_col$wpt.sample_colors) == "Not_sample")
+  
+ vTotal <- sum(sum_table_total_Pry,sum_table_total_Repl,sum_table_total_Not)
+  
+  valueBox(vTotal, 
+           icon = "fa-tint",
+           color = ifelse(vTotal >= 0, "green", "primary")) # Create a value box from the table and assign params
+})
+```
+
+### Total number of **Remaining** Water Points.
+
+```{r}
+renderValueBox({ # Call function to display a value box
+  
+  
+  pSample <- sum(na.omit(sample_points_wsg84$sample_colors) == "Primary_Sample")
+
+  
+  sum_table_total_Pry <- sum(na.omit(wpt_data_col$wpt.sample_colors) == "Primary_Sample")
+  sum_table_total_Repl <- sum(na.omit(wpt_data_col$wpt.sample_colors) == "Replacement_Sample")
+  sum_table_total_Not <- sum(na.omit(wpt_data_col$wpt.sample_colors) == "Not_sample")
+  
+ fTotal <- sum(sum_table_total_Pry,sum_table_total_Repl,sum_table_total_Not) 
+  vRem <- pSample - fTotal
+  
+  valueBox(vRem, 
+           icon = "fa-tint",
+           color = ifelse(vRem >= 0, "red", "grey")) # Create a value box from the table and assign params
+})
+```
+
+### Number of **Verified/ Found** Water Points.
+
+```{r}
+renderValueBox({ # Call function to display a value box
+  
+   sum_table_found <- sum(na.omit(wpt_data_col$osm_wp_verified) == "1")
+ 
+  
+  valueBox(sum_table_found, 
+           icon = "fa-tint",
+           color = ifelse(sum_table_found >= 0, "blue", "primary")) # Create a value box from the table and assign params
+})
+```
+
+### % of the completed Water Points are **Verified/ Found:**
+
+```{r}
+renderValueBox({ # Call function to display a value box
+  
+  sum_table_total_Pry <- sum(na.omit(wpt_data_col$wpt.sample_colors) == "Primary_Sample")
+  sum_table_total_Repl <- sum(na.omit(wpt_data_col$wpt.sample_colors) == "Replacement_Sample")
+  sum_table_total_Not <- sum(na.omit(wpt_data_col$wpt.sample_colors) == "Not_sample")
+  
+ fTotal <- sum(sum_table_total_Pry,sum_table_total_Repl,sum_table_total_Not) 
+  
+   sum_table_found <- sum(na.omit(wpt_data_col$osm_wp_verified) == "1")
+ 
+   pVerified <- round((sum_table_found / fTotal)*100)
+  
+  valueBox(pVerified, 
+           icon = "fa-tint",
+           color = ifelse(pVerified >= 0, "blue", "primary")) # Create a value box from the table and assign params
+})
+```
+
+### Number of **Functional** Water Points.
+
+```{r}
+renderValueBox({ # Call function to display a value box
+  
+   sum_table_found_Func <- sum(na.omit(wpt_data_col$verified_wpts.wpt_current_functionality) == "1")
+ 
+  
+  valueBox(sum_table_found_Func, 
+           icon = "fa-tint",
+           color = ifelse(sum_table_found_Func >= 0, "blue", "primary")) # Create a value box from the table and assign params
+})
+```
+
+### % of Water Points are **Functional**.
+
+```{r}
+renderValueBox({ # Call function to display a value box
+  
+  sum_table_found_Verified <- sum(na.omit(wpt_data_col$osm_wp_verified) == "1")
+  
+   sum_table_found_Func <- sum(na.omit(wpt_data_col$verified_wpts.wpt_current_functionality) == "1")
+ 
+   Pfunctional <- round((sum_table_found_Func / sum_table_found_Verified)*100)
+  
+  valueBox(Pfunctional, 
+           icon = "fa-tint",
+           color = ifelse(Pfunctional >= 0, "blue", "primary")) # Create a value box from the table and assign params
+})
+```
+
+Row {.tabset,orientation:columns}
+-------------------------------------
+> Functionality Match
+
+### Overall Water Points Match by Functionality( Pbr Vs Field ):
+
+```{r}
+
+renderGauge({
+  
+  wpt_data_col$field_status <- ifelse(wpt_data_col$verified_wpts.wpt_current_functionality ==1, "Functional", "Not functional")
+  
+  wpt_data_col$status_match <- ifelse(wpt_data_col$field_status == wpt_data_col$wpt.STATUS, 1, 0)
+  
+
+sum_table_func_match <- round(sum(wpt_data_col$status_match,na.rm = TRUE)/sum(complete.cases(wpt_data_col$status_match))*100)
+
+
+gauge(sum_table_func_match, min = 0, max = 100, symbol = '%', gaugeSectors(
+    success = c(75, 100), warning = c(40, 74), danger = c(0, 39)
+  ))
+
+})
+```
+
+Tables {data-icon="fa-table"} 
+=====================================  
+
+Row {.tabset,orientation:columns}
+-------------------------------------
+
+### **Verified** Completed Points: **%**
+
+```{r}
+
+renderTable({
+
+      wpt_data_col$field_status <- ifelse(wpt_data_col$verified_wpts.wpt_current_functionality ==1, "Functional", "Not functional")
+  
+  wpt_data_col$status_match <- ifelse(wpt_data_col$field_status == wpt_data_col$wpt.STATUS, "Matched", "Not Matched")
+  sum_table_found <- sum(na.omit(wpt_data_col$osm_wp_verified) == "1")
+  
+   sum_table_total_Pry <- sum(na.omit(wpt_data_col$wpt.sample_colors) == "Primary_Sample")
+  sum_table_total_Repl <- sum(na.omit(wpt_data_col$wpt.sample_colors) == "Replacement_Sample")
+  sum_table_total_Not <- sum(na.omit(wpt_data_col$wpt.sample_colors) == "Not_sample")
+  sampled_points <- sum(na.omit(sample_points_wsg84$sample_colors=="Primary_Sample"))
+  
+  
+  
+  summaryTable <- ddply(wpt_data_col, "wpt.LGA", summarise, 
+          All_Field = length(na.omit(wpt.sample_colors)),
+          Field_Found_Count=sum(na.omit(osm_wp_verified == "1")),
+          Field_Not_Found_Count=sum(na.omit(osm_wp_verified == "0")),
+          Field_Found_Perc= round((Field_Found_Count / All_Field)*100),
+          Field_Found_Functional_Count=sum(na.omit(field_status=="Functional")),
+          Field_Found_Not_Functional_Count=sum(na.omit(field_status=="Not functional")),
+          Field_Found_Functional_Perc= round((Field_Found_Functional_Count / All_Field)*100),
+          PbR_Functional_Count=sum(na.omit(wpt.wpt_status == "1")),
+          PbR_Not_Functional_Count=sum(na.omit(wpt.wpt_status == "0")),
+          PbR_Functional_Perc=round((PbR_Functional_Count / All_Field)*100),
+          Field_Found_Status_Matched_PbR_Count=sum(na.omit(status_match=="Matched")),
+          Field_Found_Status_NOT_Matched_PbR_Count=sum(na.omit(status_match=="Not Matched")),
+          Field_Found_Status_Matched_PbR_Perc= round((Field_Found_Status_Matched_PbR_Count / All_Field)*100))
+  
+write.csv(summaryTable,file='summaryTable_export.csv',append=T,row.names = F,col.names = F)
+  
+  
+  summaryTable
+  
+})
+
+```
